@@ -1,0 +1,90 @@
+[
+  {
+    "image_id": "insta_031e27dddc7b4f34a13e9135b01ce91a",
+    "ad_type": "instagram_feed",
+    "user_email": "mungmung1970@outlook.kr",
+    "product": "시그니처 라떼",
+    "tone": "캐주얼",
+    "discount": "20% 할인 오늘만",
+    "prompt": "clean modern instagram ad background, high quality, minimal composition, studio lighting, no text, bright, friendly, casual mood, fits well with 시그니처 라떼, 밝고 미니멀한 카페",
+    "prompt_extra": "밝고 미니멀한 카페",
+    "image_provider": "mock",
+    "image_path": "images/insta_031e27dddc7b4f34a13e9135b01ce91a.png",
+    "image_size": [
+      1080,
+      1080
+    ],
+    "copy": {
+      "headline": "20% 할인 오늘만 지금!",
+      "subcopy": "가볍게 즐기기 딱 좋아요",
+      "cta": "바로 확인하기"
+    },
+    "created_at": "2026-01-30T08:47:32.454881"
+  },
+  {
+    "image_id": "insta_35129c778e9348b5af2d16938d53264f",
+    "ad_type": "instagram_feed",
+    "user_email": "mungmung1970@outlook.kr",
+    "product": "시그니처 라떼",
+    "tone": "캐주얼",
+    "discount": "20% 할인 오늘만",
+    "prompt": "clean modern instagram ad background, high quality, minimal composition, studio lighting, no text, bright, friendly, casual mood, fits well with 시그니처 라떼, 밝고 미니멀한 카페 분위기",
+    "prompt_extra": "밝고 미니멀한 카페 분위기",
+    "image_provider": "mock",
+    "image_path": "images/insta_35129c778e9348b5af2d16938d53264f.png",
+    "image_size": [
+      1080,
+      1080
+    ],
+    "copy": {
+      "headline": "20% 할인 오늘만 지금!",
+      "subcopy": "가볍게 즐기기 딱 좋아요",
+      "cta": "바로 확인하기"
+    },
+    "created_at": "2026-01-31T00:19:03.493678"
+  },
+  {
+    "image_id": "insta_dc1c7ac37e724d09a2ffdb3858087d17",
+    "ad_type": "instagram_feed",
+    "user_email": "mungmung1970@outlook.kr",
+    "product": "시그니처 라떼",
+    "tone": "캐주얼",
+    "discount": "20% 할인 오늘만",
+    "prompt": "clean modern instagram ad background, high quality, minimal composition, studio lighting, no text, bright, friendly, casual mood, fits well with 시그니처 라떼",
+    "prompt_extra": null,
+    "image_provider": "mock",
+    "image_path": "images/insta_dc1c7ac37e724d09a2ffdb3858087d17.png",
+    "image_size": [
+      1080,
+      1080
+    ],
+    "copy": {
+      "headline": "20% 할인 오늘만 지금!",
+      "subcopy": "가볍게 즐기기 딱 좋아요",
+      "cta": "바로 확인하기"
+    },
+    "created_at": "2026-01-31T00:30:37.641124"
+  },
+  {
+    "image_id": "insta_0b8b075808e0437d86aa070c315809d9",
+    "ad_type": "instagram_feed",
+    "user_email": "mungmung1970@outlook.kr",
+    "product": "시그니처 라떼",
+    "tone": "캐주얼",
+    "discount": "20% 할인 오늘만",
+    "prompt": "clean modern instagram ad background, high quality, minimal composition, studio lighting, no text, bright, friendly, casual mood, fits well with 시그니처 라떼,  밝고 미니멀한 카페 분위기",
+    "prompt_extra": " 밝고 미니멀한 카페 분위기",
+    "image_provider": "mock",
+    "image_path": "images/insta_0b8b075808e0437d86aa070c315809d9.png",
+    "image_size": [
+      1080,
+      1080
+    ],
+    "copy": {
+      "headline": "20% 할인 오늘만 지금!",
+      "subcopy": "가볍게 즐기기 딱 좋아요",
+      "cta": "바로 확인하기"
+    },
+    "created_at": "2026-01-31T00:31:02.206018"
+  }
+]
