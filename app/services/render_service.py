@@ -1,75 +1,92 @@
+# render_service.py
+#  ├─ _draw_headline()
+#  ├─ _draw_subcopy()
+#  ├─ _draw_cta()
+#  ├─ _apply_emphasis()
+#  └─ _resolve_position()
+
 # ad_creator_platform/app/services/render_service.py
 """
-Render Service
+Render Service (Final Composition)
 
 역할:
-- 배경 / 메인 이미지 / 문구 레이어를 합성
-- 한글 지원 폰트 명시적 사용
-- 상대 경로 → 절대 경로 변환 책임 보유
+- 업스케일된 이미지 위에
+  광고 텍스트(Headline/Subcopy/CTA)를 최종 합성한다.
+- 한글 폰트 정상 처리
+- 강조 텍스트 부분 렌더링 지원
+
+주의:
+- 이 단계 이후에는 이미지 픽셀을 변경하지 않는다.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
-from pathlib import Path
+from typing import Dict, Tuple, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.storage.local_fs import resolve_image_path
+from app.services.layout_service import resolve_text_layout
+from app.pipeline.plan import LayoutSpec, TextBlockLayout
 
 
 # -----------------------------
-# Font Config (⭐ 핵심)
+# Font Config (중요)
 # -----------------------------
-FONT_DIR = Path("assets/fonts")
-FONT_REGULAR = FONT_DIR / "NotoSansKR-Medium.ttf"
-FONT_BOLD = FONT_DIR / "NotoSansKR-VF.ttf"
-
-
-def _load_font(*, bold: bool, size: int) -> ImageFont.FreeTypeFont:
-    """
-    한글 지원 폰트 로드 (실패 시 즉시 에러)
-    """
-    font_path = FONT_BOLD if bold else FONT_REGULAR
-
-    if not font_path.exists():
-        raise FileNotFoundError(f"폰트 파일을 찾을 수 없습니다: {font_path}")
-
-    return ImageFont.truetype(str(font_path), size=size)
+# assets/fonts/ 에 폰트 파일을 넣어주세요
+FONT_REGULAR = "assets/fonts/NotoSansKR-Regular.otf"
+FONT_BOLD = "assets/fonts/NotoSansKR-Bold.otf"
 
 
 # -----------------------------
 # Public API
 # -----------------------------
-def compose_ad_image(
+def render_text_layers(
     *,
-    background: Image.Image,
+    image: Image.Image,
     copy: Dict[str, str],
-    size: Tuple[int, int],
-    main_image_path: str | None,
-    user_email: str,
+    layout: LayoutSpec,
+    platform: str = "instagram",
 ) -> Image.Image:
     """
-    광고 이미지 최종 합성
+    최종 텍스트 레이어 합성
+
+    Args:
+        image: 업스케일 완료된 이미지 (RGB/RGBA)
+        copy: {"headline", "subcopy", "cta"}
+        layout: LayoutSpec (from plan.py)
+        platform: instagram | poster | banner
+
+    Returns:
+        PIL Image (RGBA)
     """
-    canvas = background.convert("RGBA").resize(size)
+    canvas = image.convert("RGBA")
+    draw = ImageDraw.Draw(canvas)
 
-    # -----------------------------
-    # Main Image Layer
-    # -----------------------------
-    if main_image_path:
-        canvas = _add_main_layer(
-            canvas=canvas,
-            main_image_path=main_image_path,
-            user_email=user_email,
-        )
-
-    # -----------------------------
-    # Text Layer
-    # -----------------------------
-    canvas = _add_text_layer(
+    # Headline
+    _draw_text_block(
+        draw=draw,
         canvas=canvas,
-        copy=copy,
+        text=copy.get("headline", ""),
+        spec=layout.headline,
+        platform=platform,
+    )
+
+    # Subcopy
+    _draw_text_block(
+        draw=draw,
+        canvas=canvas,
+        text=copy.get("subcopy", ""),
+        spec=layout.subcopy,
+        platform=platform,
+    )
+
+    # CTA
+    _draw_text_block(
+        draw=draw,
+        canvas=canvas,
+        text=copy.get("cta", ""),
+        spec=layout.cta,
+        platform=platform,
     )
 
     return canvas
@@ -78,94 +95,125 @@ def compose_ad_image(
 # -----------------------------
 # Internal Helpers
 # -----------------------------
-def _add_main_layer(
+def _draw_text_block(
     *,
+    draw: ImageDraw.ImageDraw,
     canvas: Image.Image,
-    main_image_path: str,
-    user_email: str,
-) -> Image.Image:
+    text: str,
+    spec: TextBlockLayout,
+    platform: str,
+) -> None:
     """
-    메인 이미지 레이어 합성
+    단일 텍스트 블록 렌더링
     """
-    abs_path = resolve_image_path(
-        email=user_email,
-        relative_path=main_image_path,
+    if not text:
+        return
+
+    resolved = resolve_text_layout(
+        canvas_size=canvas.size,
+        position=spec.position,
+        font_size=spec.font_size,
+        color_hex=spec.color_hex,
+        emphasis=spec.emphasis.__dict__ if spec.emphasis else None,
+        platform=platform,
     )
 
-    main = Image.open(abs_path).convert("RGBA")
+    font = _load_font(
+        style=spec.font_style,
+        size=resolved.font_px,
+    )
 
-    canvas_w, canvas_h = canvas.size
-    main_w, main_h = main.size
+    # 강조 텍스트가 없는 경우 → 한 번에 렌더
+    if not resolved.emphasis:
+        draw.text(
+            (resolved.x, resolved.y),
+            text,
+            font=font,
+            fill=resolved.color,
+            anchor=resolved.anchor,
+        )
+        return
 
-    scale = min(canvas_w / main_w, canvas_h / main_h) * 0.6
-    new_size = (int(main_w * scale), int(main_h * scale))
-    main = main.resize(new_size, Image.LANCZOS)
+    # 강조 텍스트 처리
+    _draw_text_with_emphasis(
+        draw=draw,
+        base_xy=(resolved.x, resolved.y),
+        anchor=resolved.anchor,
+        base_font=font,
+        base_color=resolved.color,
+        text=text,
+        emphasis=resolved.emphasis,
+    )
 
-    x = (canvas_w - main.width) // 2
-    y = (canvas_h - main.height) // 2
 
-    canvas.paste(main, (x, y), main)
-    return canvas
-
-
-def _add_text_layer(
+def _draw_text_with_emphasis(
     *,
-    canvas: Image.Image,
-    copy: Dict[str, str],
-) -> Image.Image:
+    draw: ImageDraw.ImageDraw,
+    base_xy: Tuple[int, int],
+    anchor: str,
+    base_font: ImageFont.FreeTypeFont,
+    base_color: Tuple[int, int, int, int],
+    text: str,
+    emphasis: Dict,
+) -> None:
     """
-    광고 문구 레이어 합성 (한글 완전 지원)
+    문자열 중 특정 부분만 강조 렌더링
     """
-    draw = ImageDraw.Draw(canvas)
-    w, h = canvas.size
+    target = emphasis.get("text")
+    if not target or target not in text:
+        draw.text(base_xy, text, font=base_font, fill=base_color, anchor=anchor)
+        return
 
-    # -----------------------------
-    # Fonts (⭐ 한글 OK)
-    # -----------------------------
-    headline_font = _load_font(bold=True, size=72)
-    subcopy_font = _load_font(bold=False, size=40)
-    cta_font = _load_font(bold=True, size=36)
+    before, after = text.split(target, 1)
 
-    headline = copy.get("headline", "")
-    subcopy = copy.get("subcopy", "")
-    cta = copy.get("cta", "")
+    # 강조 폰트
+    scale = float(emphasis.get("scale", 1.2))
+    emph_font = _load_font(
+        style="bold",
+        size=int(base_font.size * scale),
+    )
+    emph_color = _hex_to_rgba(emphasis.get("color_hex", "#FF4D4D"))
 
-    margin = int(h * 0.08)
-    y = h - margin
+    # 기준점 보정: anchor 중앙 기준으로 왼쪽부터 직접 배치
+    x, y = base_xy
 
-    # CTA
-    if cta:
-        bbox = draw.textbbox((0, 0), cta, font=cta_font)
-        text_w = bbox[2] - bbox[0]
-        draw.text(
-            ((w - text_w) // 2, y - 40),
-            cta,
-            font=cta_font,
-            fill=(255, 255, 255, 255),
-        )
-        y -= 60
+    # 전체 폭 계산
+    bw = base_font.getlength(before)
+    tw = emph_font.getlength(target)
+    aw = base_font.getlength(after)
+    total_w = bw + tw + aw
 
-    # Subcopy
-    if subcopy:
-        bbox = draw.textbbox((0, 0), subcopy, font=subcopy_font)
-        text_w = bbox[2] - bbox[0]
-        draw.text(
-            ((w - text_w) // 2, y - 35),
-            subcopy,
-            font=subcopy_font,
-            fill=(255, 255, 255, 220),
-        )
-        y -= 55
+    start_x = x - total_w / 2
 
-    # Headline
-    if headline:
-        bbox = draw.textbbox((0, 0), headline, font=headline_font)
-        text_w = bbox[2] - bbox[0]
-        draw.text(
-            ((w - text_w) // 2, y - 50),
-            headline,
-            font=headline_font,
-            fill=(255, 255, 255, 255),
-        )
+    # before
+    draw.text((start_x, y), before, font=base_font, fill=base_color, anchor="lm")
+    cur_x = start_x + bw
 
-    return canvas
+    # target
+    draw.text((cur_x, y), target, font=emph_font, fill=emph_color, anchor="lm")
+    cur_x += tw
+
+    # after
+    draw.text((cur_x, y), after, font=base_font, fill=base_color, anchor="lm")
+
+
+def _load_font(*, style: str, size: int) -> ImageFont.FreeTypeFont:
+    """
+    한글 폰트 로드
+    """
+    path = FONT_BOLD if style == "bold" else FONT_REGULAR
+    try:
+        return ImageFont.truetype(path, size)
+    except Exception:
+        # 최후의 폴백 (깨질 수 있음)
+        return ImageFont.load_default()
+
+
+def _hex_to_rgba(hex_color: str, alpha: int = 255) -> Tuple[int, int, int, int]:
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) != 6:
+        return (255, 255, 255, alpha)
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return (r, g, b, alpha)

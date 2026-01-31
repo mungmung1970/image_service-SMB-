@@ -1,17 +1,16 @@
 # ad_creator_platform/modules/instagram/pipeline.py
 """
-Instagram Feed Ad Pipeline
+Instagram Ad Generation Pipeline
 
 역할:
-- 인스타 피드 광고 생성의 '전체 흐름'을 담당
-- UI(Streamlit)와 비즈니스 로직을 분리
-- 플랫폼 공통 서비스들을 조합
+- 인스타그램 피드 광고 1장을 생성하는 '플랫폼 전용 파이프라인'
+- 하위 파이프라인(plan/segment/background/relight/upscale/render)을 조합
+- Streamlit UI 및 이력 저장에서 바로 사용할 수 있는 결과를 반환
 
-Flow:
-1) 광고 문구 생성 (copy_service)
-2) 배경 이미지 생성 (image_service)
-3) 레이어 합성 (render_service)
-4) 로컬 저장 + 이력 기록 (local_fs)
+출력:
+- 최종 이미지 (PIL Image)
+- copy (headline/subcopy/cta)
+- layout (LayoutSpec)
 """
 
 from __future__ import annotations
@@ -20,162 +19,136 @@ from typing import Dict, Optional
 
 from PIL import Image
 
-from app.services.copy_service import generate_copy
-from app.services.image_service import generate_background
-from app.services.render_service import compose_ad_image
-from app.storage.local_fs import (
-    generate_image_id,
-    save_image,
-    append_history,
-)
-from app.core.logging import log_action
-from app.core.metadata import AdMetadata
-from app.core.config import IMAGE_PROVIDER
+# ---- Pipeline Stages ----
+from pipeline.plan import build_plan
+from pipeline.segment import segment_product, SegmentConfig
+from pipeline.background import generate_background, BackgroundConfig
+from pipeline.relight import relight_and_compose, RelightConfig
+from pipeline.upscale import upscale_image, UpscaleConfig
+
+# ---- Render ----
+from app.services.render_service import render_text_layers
 
 
 # -----------------------------
-# Instagram Feed Config
+# Public API
 # -----------------------------
-INSTAGRAM_FEED_SIZE = (1080, 1080)
-
-
-# -----------------------------
-# Public Pipeline API
-# -----------------------------
-def generate_instagram_feed_ad(
+def generate_instagram_ad(
     *,
-    user_email: str,
     product: str,
     tone: str,
     discount: Optional[str] = None,
     prompt_extra: Optional[str] = None,
-    main_image_path: Optional[str] = None,
-) -> Dict[str, str]:
+    # 사용자 업로드 메인 이미지(선택)
+    main_image: Optional[Image.Image] = None,
+    # 출력 옵션
+    canvas_size: tuple[int, int] = (1080, 1080),
+) -> Dict:
     """
-    인스타 피드 광고 생성 파이프라인 (플랫폼 핵심 API)
+    인스타 피드 광고 1장 생성
 
     Args:
-        user_email: 로그인한 사용자 이메일
         product: 상품/서비스명
-        tone: 광고 톤 ("캐주얼" | "고급" | "감성")
-        discount: 할인 정보 (선택)
-        prompt_extra: 이미지 생성 추가 힌트 (선택)
-        main_image_path: 메인 오브젝트 PNG 경로 (선택)
+        tone: "캐주얼" | "고급" | "감성"
+        discount: "50%" 등 할인 문구 (선택)
+        prompt_extra: 배경 분위기 추가 힌트 (선택)
+        main_image: 사용자가 업로드한 제품 이미지 (선택)
+        canvas_size: 인스타 피드 기본 1080x1080
 
     Returns:
         {
-          "image_id": str,
-          "image_path": str,      # 사용자 기준 상대 경로
-          "headline": str,
-          "subcopy": str,
-          "cta": str
+          "image": PIL.Image,
+          "copy": {headline, subcopy, cta},
+          "layout": LayoutSpec,
+          "background_prompt": str
         }
     """
 
     # -----------------------------
-    # 1) 광고 문구 생성
+    # 1) PLAN (LLM / Rule)
     # -----------------------------
-    copy = generate_copy(
+    plan = build_plan(
         product=product,
         tone=tone,  # type: ignore[arg-type]
         discount=discount,
-        extra_hint=prompt_extra,
+        prompt_extra=prompt_extra,
     )
 
     # -----------------------------
-    # 2) 배경 이미지 생성
+    # 2) BACKGROUND
     # -----------------------------
     bg = generate_background(
-        size=INSTAGRAM_FEED_SIZE,
-        prompt=_build_image_prompt(product, tone, prompt_extra),
-        negative_prompt="text, watermark, logo",
+        prompt=plan.background_prompt,
+        config=BackgroundConfig(
+            size=canvas_size,
+            lora_key=plan.model_hints.lora_key,
+            control_hint=plan.model_hints.control_hint,
+            ip_adapter_ref=plan.model_hints.ip_adapter_ref,
+        ),
     )
 
     # -----------------------------
-    # 3) 레이어 합성
+    # 3) SEGMENT (optional)
     # -----------------------------
-    final_image: Image.Image = compose_ad_image(
-        background=bg,
-        copy=copy,
-        size=INSTAGRAM_FEED_SIZE,
-        main_image_path=main_image_path,
-        user_email=user_email,
+    fg_rgba: Optional[Image.Image] = None
+    if main_image is not None:
+        fg_rgba = segment_product(
+            image=main_image,
+            config=SegmentConfig(
+                backend="fallback",  # 나중에 "birefnet"으로 교체
+            ),
+        )
+
+    # -----------------------------
+    # 4) RELIGHT (compose)
+    # -----------------------------
+    if fg_rgba is not None:
+        composed = relight_and_compose(
+            background=bg,
+            foreground_rgba=fg_rgba,
+            config=RelightConfig(
+                backend="fallback",  # 나중에 "ic_light"로 교체
+            ),
+        )
+    else:
+        composed = bg
+
+    # -----------------------------
+    # 5) UPSCALE
+    # -----------------------------
+    upscaled = upscale_image(
+        image=composed,
+        config=UpscaleConfig(
+            backend="fallback",
+            scale=1,  # 인스타 기본은 1 (나중에 2x/4x 가능)
+            max_size=canvas_size,
+        ),
     )
 
     # -----------------------------
-    # 4) 저장 + 이력 기록
+    # 6) RENDER TEXT (FINAL)
     # -----------------------------
-    image_id = generate_image_id(prefix="insta")
-    image_rel_path = save_image(
-        email=user_email,
-        pil_image=final_image,
-        image_id=image_id,
-        ext="png",
-    )
-
-    metadata = AdMetadata(
-        image_id=image_id,
-        ad_type="instagram_feed",
-        user_email=user_email,
-        product=product,
-        tone=tone,
-        discount=discount,
-        prompt=_build_image_prompt(product, tone, prompt_extra),
-        prompt_extra=prompt_extra,
-        image_provider=IMAGE_PROVIDER,
-        image_path=image_rel_path,
-        image_size=INSTAGRAM_FEED_SIZE,
-        copy=copy,
-    )
-
-    append_history(
-        email=user_email,
-        record=metadata.to_dict(),
+    final_image = render_text_layers(
+        image=upscaled,
+        copy={
+            "headline": plan.copy.headline,
+            "subcopy": plan.copy.subcopy,
+            "cta": plan.copy.cta,
+        },
+        layout=plan.layout,
+        platform="instagram",
     )
 
     # -----------------------------
-    # 5) 결과 반환
+    # Result
     # -----------------------------
     return {
-        "image_id": image_id,
-        "image_path": image_rel_path,
-        "headline": copy["headline"],
-        "subcopy": copy["subcopy"],
-        "cta": copy["cta"],
+        "image": final_image,
+        "copy": {
+            "headline": plan.copy.headline,
+            "subcopy": plan.copy.subcopy,
+            "cta": plan.copy.cta,
+        },
+        "layout": plan.layout,
+        "background_prompt": plan.background_prompt,
     }
-
-
-# -----------------------------
-# Prompt Helper
-# -----------------------------
-def _build_image_prompt(
-    product: str,
-    tone: str,
-    extra: Optional[str],
-) -> str:
-    """
-    인스타 광고용 이미지 프롬프트 빌더
-    - 텍스트는 절대 포함하지 않음
-    """
-    base = [
-        "clean modern instagram ad background",
-        "high quality",
-        "minimal composition",
-        "studio lighting",
-        "no text",
-    ]
-
-    if tone == "고급":
-        base.append("luxury, premium mood")
-    elif tone == "감성":
-        base.append("warm, emotional, cozy mood")
-    else:
-        base.append("bright, friendly, casual mood")
-
-    if product:
-        base.append(f"fits well with {product}")
-
-    if extra:
-        base.append(extra)
-
-    return ", ".join(base)
